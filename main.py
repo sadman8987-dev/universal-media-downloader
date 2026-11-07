@@ -1,8 +1,11 @@
 import os
 import asyncio
 import logging
+import secrets
 import tempfile
 from pathlib import Path
+
+from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 import yt_dlp
@@ -16,11 +19,15 @@ MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024
 DOWNLOAD_DIR = Path(tempfile.gettempdir()) / "media-downloader"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 JOBS = {}
+WEBHOOK_SECRET = secrets.token_urlsafe(32)
+application = Application.builder().token(BOT_TOKEN).build()
+
 
 def inspect_url(url: str):
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True}
     with yt_dlp.YoutubeDL(opts) as ydl:
         return ydl.extract_info(url, download=False)
+
 
 def download_media(url: str, kind: str, quality: str, job_id: str):
     output = str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")
@@ -40,8 +47,14 @@ def download_media(url: str, kind: str, quality: str, job_id: str):
         raise RuntimeError("لم يتم إنشاء ملف التحميل.")
     return max(files, key=lambda p: p.stat().st_size)
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أهلاً بك في Media Downloader 📥\nابعت رابط فيديو عام تملك حق تنزيله، وهعرض لك الجودات المتاحة.\nيمكنك أيضاً اختيار MP3 للصوت فقط.")
+    await update.message.reply_text(
+        "أهلاً بك في Media Downloader 📥\n"
+        "ابعت رابط فيديو عام تملك حق تنزيله، وهعرض لك الجودات المتاحة.\n"
+        "يمكنك أيضاً اختيار استخراج الصوت MP3."
+    )
+
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = (update.message.text or "").strip()
@@ -68,6 +81,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         log.exception("Inspect failed")
         await status.edit_text(f"تعذر فحص الرابط: {str(e)[:250]}")
+
 
 async def choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -99,17 +113,53 @@ async def choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
             path.unlink(missing_ok=True)
         JOBS.pop(key, None)
 
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("ابعت رابط فيديو عام مسموح لك بتنزيله، ثم اختار الجودة أو MP3. لا يدعم تجاوز DRM أو القيود.")
+    await update.message.reply_text(
+        "ابعت رابط فيديو عام مسموح لك بتنزيله، ثم اختار الجودة أو MP3. "
+        "لا يدعم تجاوز DRM أو القيود."
+    )
+
+
+async def telegram_webhook(request: web.Request):
+    if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != WEBHOOK_SECRET:
+        raise web.HTTPUnauthorized()
+    data = await request.json()
+    update = Update.de_json(data, application.bot)
+    await application.process_update(update)
+    return web.Response(text="ok")
+
+
+async def health(request: web.Request):
+    return web.Response(text="ok")
+
+
+async def on_startup(app):
+    await application.initialize()
+    await application.start()
+    host = os.environ["RENDER_EXTERNAL_HOSTNAME"]
+    await application.bot.set_webhook(
+        url=f"https://{host}/telegram",
+        secret_token=WEBHOOK_SECRET,
+        drop_pending_updates=True,
+    )
+    log.info("Webhook configured for %s", host)
+
+
+async def on_cleanup(app):
+    await application.stop()
+    await application.shutdown()
+
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
-    app.add_handler(CallbackQueryHandler(choose))
-    log.info("Bot is starting")
-    app.run_polling(drop_pending_updates=True)
+    port = int(os.environ.get("PORT", "10000"))
+    server = web.Application(client_max_size=1024 * 1024)
+    server.router.add_get("/", health)
+    server.router.add_post("/telegram", telegram_webhook)
+    server.on_startup.append(on_startup)
+    server.on_cleanup.append(on_cleanup)
+    web.run_app(server, host="0.0.0.0", port=port)
+
 
 if __name__ == "__main__":
     main()
