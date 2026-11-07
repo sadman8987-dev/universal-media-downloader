@@ -1,2 +1,3 @@
 python-telegram-bot==21.10
 yt-dlp[default]
+aiohttp>=3.9,<4
