@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import yt_dlp
+from smart_download_engine import download_with_engine, is_gallery_url
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
@@ -59,7 +60,9 @@ def download_media(url: str, kind: str, quality: str, job_id: str):
         "fragment_retries": 3,
         "extractor_retries": 3,
     }
-    if kind == "audio":
+    if kind == "gallery":
+        pass
+    elif kind == "audio":
         opts["format"] = "bestaudio/best"
         opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
@@ -73,12 +76,10 @@ def download_media(url: str, kind: str, quality: str, job_id: str):
             f"best[height<={height}]/best"
         )
         opts["merge_output_format"] = "mp4"
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
-    files = [p for p in DOWNLOAD_DIR.glob(f"{job_id}.*") if p.is_file()]
-    if not files:
-        raise RuntimeError("لم يتم إنشاء ملف التحميل.")
-    return max(files, key=lambda p: p.stat().st_size)
+    return download_with_engine(
+        url=url, kind=kind, quality=quality, output_dir=DOWNLOAD_DIR,
+        job_id=job_id, max_file_size=MAX_FILE_SIZE, yt_dlp_options=opts,
+    )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,6 +123,8 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         JOBS[key] = {"url": url, "title": title}
         buttons = [[InlineKeyboardButton(f"🎬 {h}p", callback_data=f"v:{h}")] for h in choices]
         buttons.append([InlineKeyboardButton("🎵 تنزيل الصوت", callback_data="audio")])
+        if is_gallery_url(url):
+            buttons.append([InlineKeyboardButton("🖼 تنزيل الصور/الألبوم", callback_data="gallery")])
         await status.edit_text(f"{title}\nاختار الجودة:", reply_markup=InlineKeyboardMarkup(buttons))
     except Exception as e:
         log.exception("Inspect failed")
@@ -161,8 +164,8 @@ async def choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("الرابط انتهت صلاحيته. ابعته مرة تانية.")
         return
 
-    kind = "audio" if query.data == "audio" else "video"
-    quality = "0" if kind == "audio" else query.data.split(":", 1)[1]
+    kind = "gallery" if query.data == "gallery" else ("audio" if query.data == "audio" else "video")
+    quality = "0" if kind in {"audio", "gallery"} else query.data.split(":", 1)[1]
     await query.edit_message_text("⬇️ جاري التحميل... قد يستغرق بعض الوقت.")
     job_id = f"{query.from_user.id}_{query.message.message_id}"
     path = None
