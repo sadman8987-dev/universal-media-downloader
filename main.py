@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import yt_dlp
+from smart_download_engine import download_with_engine, is_gallery_url
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
@@ -59,7 +60,9 @@ def download_media(url: str, kind: str, quality: str, job_id: str):
         "fragment_retries": 3,
         "extractor_retries": 3,
     }
-    if kind == "audio":
+    if kind == "gallery":
+        pass
+    elif kind == "audio":
         opts["format"] = "bestaudio/best"
         opts["postprocessors"] = [{
             "key": "FFmpegExtractAudio",
@@ -67,18 +70,19 @@ def download_media(url: str, kind: str, quality: str, job_id: str):
             "preferredquality": "192",
         }]
     else:
-        height = int(quality)
-        opts["format"] = (
-            f"bestvideo[height<={height}]+bestaudio/"
-            f"best[height<={height}]/best"
-        )
+        if quality == "best":
+            opts["format"] = "bestvideo+bestaudio/best"
+        else:
+            height = int(quality)
+            opts["format"] = (
+                f"bestvideo[height<={height}]+bestaudio/"
+                f"best[height<={height}]/best"
+            )
         opts["merge_output_format"] = "mp4"
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
-    files = [p for p in DOWNLOAD_DIR.glob(f"{job_id}.*") if p.is_file()]
-    if not files:
-        raise RuntimeError("لم يتم إنشاء ملف التحميل.")
-    return max(files, key=lambda p: p.stat().st_size)
+    return download_with_engine(
+        url=url, kind=kind, quality=quality, output_dir=DOWNLOAD_DIR,
+        job_id=job_id, max_file_size=MAX_FILE_SIZE, yt_dlp_options=opts,
+    )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,17 +119,37 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not choices and heights:
             choices = [max(heights)]
         if not choices:
-            await status.edit_text("لم أجد جودة فيديو قابلة للتنزيل بدون دمج ملفات.")
+            if is_gallery_url(url):
+                key = f"{update.effective_user.id}:{update.effective_chat.id}"
+                JOBS[key] = {"url": url, "title": title}
+                buttons = [[InlineKeyboardButton("🖼 تنزيل الصور/الألبوم", callback_data="gallery")]]
+                await status.edit_text(
+                    "لم أجد مسار فيديو مناسبًا؛ يمكنك تجربة تنزيل الصور/الألبوم:",
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                )
+            else:
+                await status.edit_text("لم أجد جودة فيديو قابلة للتنزيل بدون دمج ملفات.")
             return
 
         key = f"{update.effective_user.id}:{update.effective_chat.id}"
         JOBS[key] = {"url": url, "title": title}
         buttons = [[InlineKeyboardButton(f"🎬 {h}p", callback_data=f"v:{h}")] for h in choices]
         buttons.append([InlineKeyboardButton("🎵 تنزيل الصوت", callback_data="audio")])
+        if is_gallery_url(url):
+            buttons.append([InlineKeyboardButton("🖼 تنزيل الصور/الألبوم", callback_data="gallery")])
         await status.edit_text(f"{title}\nاختار الجودة:", reply_markup=InlineKeyboardMarkup(buttons))
     except Exception as e:
         log.exception("Inspect failed")
         detail = str(e).lower()
+        if is_gallery_url(url):
+            key = f"{update.effective_user.id}:{update.effective_chat.id}"
+            JOBS[key] = {"url": url, "title": "Media gallery"}
+            buttons = [[InlineKeyboardButton("🖼 تنزيل الصور/الألبوم", callback_data="gallery")]]
+            await status.edit_text(
+                "تعذّر فحص الألبوم كفيديو. يمكن تجربة تنزيل الصور العامة المتاحة:",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+            return
         if is_tiktok_url(url):
             key = f"{update.effective_user.id}:{update.effective_chat.id}"
             JOBS[key] = {"url": url, "title": "TikTok video"}
@@ -161,8 +185,8 @@ async def choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("الرابط انتهت صلاحيته. ابعته مرة تانية.")
         return
 
-    kind = "audio" if query.data == "audio" else "video"
-    quality = "0" if kind == "audio" else query.data.split(":", 1)[1]
+    kind = "gallery" if query.data == "gallery" else ("audio" if query.data == "audio" else "video")
+    quality = "0" if kind in {"audio", "gallery"} else query.data.split(":", 1)[1]
     await query.edit_message_text("⬇️ جاري التحميل... قد يستغرق بعض الوقت.")
     job_id = f"{query.from_user.id}_{query.message.message_id}"
     path = None
@@ -222,7 +246,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CallbackQueryHandler(choose, pattern=r"^(audio|v:\d+)$"))
+    app.add_handler(CallbackQueryHandler(choose, pattern=r"^(audio|gallery|v:\d+)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     log.info("Media Downloader bot starting with long polling")
     app.run_polling(drop_pending_updates=True)
