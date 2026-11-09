@@ -70,11 +70,14 @@ def download_media(url: str, kind: str, quality: str, job_id: str):
             "preferredquality": "192",
         }]
     else:
-        height = int(quality)
-        opts["format"] = (
-            f"bestvideo[height<={height}]+bestaudio/"
-            f"best[height<={height}]/best"
-        )
+        if quality == "best":
+            opts["format"] = "bestvideo+bestaudio/best"
+        else:
+            height = int(quality)
+            opts["format"] = (
+                f"bestvideo[height<={height}]+bestaudio/"
+                f"best[height<={height}]/best"
+            )
         opts["merge_output_format"] = "mp4"
     return download_with_engine(
         url=url, kind=kind, quality=quality, output_dir=DOWNLOAD_DIR,
