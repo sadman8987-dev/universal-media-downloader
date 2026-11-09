@@ -129,6 +129,15 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         log.exception("Inspect failed")
         detail = str(e).lower()
+        if is_gallery_url(url):
+            key = f"{update.effective_user.id}:{update.effective_chat.id}"
+            JOBS[key] = {"url": url, "title": "Media gallery"}
+            buttons = [[InlineKeyboardButton("🖼 تنزيل الصور/الألبوم", callback_data="gallery")]]
+            await status.edit_text(
+                "تعذّر فحص الألبوم كفيديو. يمكن تجربة تنزيل الصور العامة المتاحة:",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+            return
         if is_tiktok_url(url):
             key = f"{update.effective_user.id}:{update.effective_chat.id}"
             JOBS[key] = {"url": url, "title": "TikTok video"}
@@ -225,7 +234,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CallbackQueryHandler(choose, pattern=r"^(audio|v:\d+)$"))
+    app.add_handler(CallbackQueryHandler(choose, pattern=r"^(audio|gallery|v:\d+)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     log.info("Media Downloader bot starting with long polling")
     app.run_polling(drop_pending_updates=True)
