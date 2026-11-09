@@ -16,9 +16,9 @@ from urllib.parse import urlparse
 import yt_dlp
 
 
+# Social video URLs stay on yt-dlp; gallery-dl can enter long 429 backoff loops.
 GALLERY_HOSTS = {
-    "instagram.com", "www.instagram.com", "imgur.com", "www.imgur.com",
-    "reddit.com", "www.reddit.com", "pinterest.com", "www.pinterest.com",
+    "imgur.com", "www.imgur.com",
 }
 MANIFEST_SUFFIXES = (".m3u8", ".mpd")
 
