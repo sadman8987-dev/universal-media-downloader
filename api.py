@@ -1,6 +1,7 @@
 """Authenticated HTTP API for the standalone unified media download engine."""
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import os
 import shutil
@@ -87,7 +88,9 @@ async def download(request: DownloadRequest, x_api_key: str | None = Header(defa
                 f"bestvideo[height<={height}]+bestaudio/"
                 f"best[height<={height}]/best"
             )
-        result = download_with_engine(
+        # Run blocking media extraction outside the ASGI event loop.
+        result = await asyncio.to_thread(
+            download_with_engine,
             url=request.url,
             kind=request.kind,
             quality=request.quality,
