@@ -116,7 +116,16 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not choices and heights:
             choices = [max(heights)]
         if not choices:
-            await status.edit_text("لم أجد جودة فيديو قابلة للتنزيل بدون دمج ملفات.")
+            if is_gallery_url(url):
+                key = f"{update.effective_user.id}:{update.effective_chat.id}"
+                JOBS[key] = {"url": url, "title": title}
+                buttons = [[InlineKeyboardButton("🖼 تنزيل الصور/الألبوم", callback_data="gallery")]]
+                await status.edit_text(
+                    "لم أجد مسار فيديو مناسبًا؛ يمكنك تجربة تنزيل الصور/الألبوم:",
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                )
+            else:
+                await status.edit_text("لم أجد جودة فيديو قابلة للتنزيل بدون دمج ملفات.")
             return
 
         key = f"{update.effective_user.id}:{update.effective_chat.id}"
