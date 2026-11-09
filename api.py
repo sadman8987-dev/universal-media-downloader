@@ -66,6 +66,27 @@ async def download(request: DownloadRequest, x_api_key: str | None = Header(defa
 
     workdir = Path(tempfile.mkdtemp(prefix="unified-engine-"))
     try:
+        options = {
+            "quiet": True, "no_warnings": True, "noplaylist": True,
+            "socket_timeout": 30, "retries": 3,
+            "fragment_retries": 5, "extractor_retries": 3,
+            "merge_output_format": "mp4",
+        }
+        if request.kind == "audio":
+            options["format"] = "bestaudio/best"
+            options["postprocessors"] = [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }]
+        elif request.quality == "best":
+            options["format"] = "bestvideo+bestaudio/best"
+        else:
+            height = int(request.quality)
+            options["format"] = (
+                f"bestvideo[height<={height}]+bestaudio/"
+                f"best[height<={height}]/best"
+            )
         result = download_with_engine(
             url=request.url,
             kind=request.kind,
@@ -73,11 +94,7 @@ async def download(request: DownloadRequest, x_api_key: str | None = Header(defa
             output_dir=workdir,
             job_id=uuid.uuid4().hex,
             max_file_size=MAX_FILE_SIZE,
-            yt_dlp_options={
-                "quiet": True, "no_warnings": True, "noplaylist": True,
-                "socket_timeout": 30, "retries": 3,
-                "fragment_retries": 5, "extractor_retries": 3,
-            },
+            yt_dlp_options=options,
         )
         if not result.is_file() or result.stat().st_size <= 0:
             raise RuntimeError("Download produced no file.")
